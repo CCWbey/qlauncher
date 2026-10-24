@@ -1,0 +1,41 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      # nuget.config 里的国内镜像只为本地加速，Runner 上直连 nuget.org 即可
+      - name: Use nuget.org only
+        run: dotnet nuget disable source nuget-cdn --configfile nuget.config
+
+      - name: Build and self-test
+        shell: powershell
+        run: |
+          # 自检日志是 UTF-8，控制台按 GBK 解码会把中文写成乱码
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8
+          .\build.ps1 -NoRun -SelfTest
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: QLaunch-win-x64
+          path: dist/
+          if-no-files-found: error

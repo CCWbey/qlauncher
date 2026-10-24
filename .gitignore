@@ -1,0 +1,12 @@
+# 构建中间与输出目录
+bin/
+obj/
+dist/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# 程序以产物目录为工作目录时，显卡驱动在其中写的运行日志
+NVIDIA Corporation/

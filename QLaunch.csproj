@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>QLaunch</AssemblyName>
+    <RootNamespace>QLaunch</RootNamespace>
+    <Platforms>AnyCPU;x64</Platforms>
+    <!-- 钉住 win-x64 但继续依赖已装的桌面运行时：不钉 RID 时 publish 会把 Bergamot 的 7 份跨平台原生库（约 112MB）全拷进产物 -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BergamotTranslatorSharp" Version="0.7.0" />
+  </ItemGroup>
+
+  <!-- UIAutomation 只随 WindowsDesktop 框架提供，WinForms 项目默认不引用，这里从定位包补上 -->
+  <Target Name="AddUiaReferences" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Reference.Filename)' == 'WindowsBase'" />
+      <_UiaFile Include="$(NetCoreRoot)packs/Microsoft.WindowsDesktop.App.Ref/*/ref/net10.0/WindowsBase.dll" />
+      <_UiaFile Include="$(NetCoreRoot)packs/Microsoft.WindowsDesktop.App.Ref/*/ref/net10.0/UIAutomationClient.dll" />
+      <_UiaFile Include="$(NetCoreRoot)packs/Microsoft.WindowsDesktop.App.Ref/*/ref/net10.0/UIAutomationTypes.dll" />
+      <Reference Include="@(_UiaFile->'%(FileName)')" HintPath="%(_UiaFile.FullPath)" Private="false" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <Content Include="app.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="libs\Everything64.dll" Link="Everything64.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="models\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>
