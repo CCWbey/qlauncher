@@ -1,0 +1,54 @@
+name: release
+
+on:
+  push:
+    tags: ['*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要发布资产的已有 tag（例如 0.1）
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      # nuget.config 里的国内镜像只为本地加速，Runner 上直连 nuget.org 即可
+      - name: Use nuget.org only
+        run: dotnet nuget disable source nuget-cdn --configfile nuget.config
+
+      - name: Build and self-test
+        shell: powershell
+        run: |
+          # 自检日志是 UTF-8，控制台按 GBK 解码会把中文写成乱码
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8
+          .\build.ps1 -NoRun -SelfTest
+
+      - name: Package and publish
+        shell: powershell
+        run: |
+          $tag = "${{ inputs.tag }}"
+          if (-not $tag) { $tag = "${{ github.ref_name }}" }
+          $zip = "QLaunch-$tag-win-x64.zip"
+          Compress-Archive -Path dist\* -DestinationPath $zip
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) { gh release create $tag --title $tag --generate-notes }
+          gh release upload $tag $zip --clobber
+          Write-Host "已上传 $zip 到 Release $tag（$([math]::Round((Get-Item $zip).Length / 1MB)) MB）"

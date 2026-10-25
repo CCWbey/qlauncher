@@ -143,6 +143,7 @@ src/AppSettings.cs / Startup.cs / Models.cs  设置持久化、开机自启、DT
 libs/Everything64.dll    Everything SDK，构建时拷到产物根目录
 models/enzh/             Bergamot 英译中模型（config.txt + 权重 + 词表）
 build.ps1 / build.cmd    一键构建：关旧实例 → publish →（可选无头自检）→ 启动
+.github/workflows/       build.yml（推送/PR 构建自检）、release.yml（tag 触发发布 zip）
 LICENSE / THIRD-PARTY-NOTICES.md   MIT 许可与第三方组件（MPL-2.0、Everything SDK）声明
 ```
 
@@ -167,6 +168,16 @@ LICENSE / THIRD-PARTY-NOTICES.md   MIT 许可与第三方组件（MPL-2.0、Ever
 - **重复双击没反应**：单实例互斥 `QLaunch.SingleInstance` 会让第二次启动静默退出，先确认托盘里是否已经有一个。
 - **从管理员窗口划词取不到字**：UIPI 会挡住低权限进程向提权窗口发 `Ctrl+C`，属系统限制。
 - **开机自启弹警告**：受限组策略下写 `HKCU\...\Run` 可能被拦，可改为把快捷方式放进启动文件夹（`shell:startup`）。
+
+## 发布
+
+推送任意 tag 会触发 [release.yml](.github/workflows/release.yml)：在 `windows-latest` 上构建并自检，通过后把 `dist/` 压成 `QLaunch-<tag>-win-x64.zip` 挂到同名 Release。包是框架依赖版，目标机器未装 .NET 10 桌面运行时时，Windows 会提示去安装。
+
+已存在的 tag 需要补资产时，手动触发即可：
+
+```powershell
+gh workflow run release.yml -f tag=0.1
+```
 
 ## 许可证
 
