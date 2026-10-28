@@ -37,8 +37,9 @@ internal sealed class LauncherModel
     public const string DefaultPlaceholder = "应用名 / 文件关键词 / 英文句子";
     public const string SelectionPlaceholder = "已捕获选中文本，继续输入可改搜应用/文件";
     public const string EnginePendingText = "（正在翻译…）";
-    public const string EngineNotReadyText = "（离线引擎未就绪，只取到原文）";
     public const int GridColumns = 6;
+    // 长原文再在副标题里铺一遍会把结果区撑满，这时只显示当前一侧，靠切换查看另一种语言。
+    public const int LongSourceChars = 200;
 
     private List<Result> _frequent = [];
     private List<Result> _results = [];
@@ -242,17 +243,20 @@ internal sealed class LauncherModel
         return actions;
     }
 
+    private bool HideSourcePreview => _source.Length > LongSourceChars;
+
     private void Rebuild()
     {
         if (_translation is not null)
         {
+            bool hideSource = HideSourcePreview;
             Rows =
             [
                 new Result
                 {
                     Kind = "trans",
                     Title = _showOriginal ? _source : _translation,
-                    Subtitle = _showOriginal ? _translation : _source,
+                    Subtitle = hideSource ? "" : (_showOriginal ? _translation : _source),
                     Glyph = _showOriginal ? "原" : "译"
                 },
                 .. _results
@@ -261,7 +265,11 @@ internal sealed class LauncherModel
         }
         if (_transPending)
         {
-            Rows = [new Result { Kind = "trans", Title = EnginePendingText, Subtitle = _source, Glyph = "译" }, .. _results];
+            Rows =
+            [
+                new Result { Kind = "trans", Title = EnginePendingText, Subtitle = HideSourcePreview ? "" : _source, Glyph = "译" },
+                .. _results
+            ];
             return;
         }
         Rows = _results;

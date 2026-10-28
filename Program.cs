@@ -74,13 +74,11 @@ internal static class Program
         }
 
         Translator tr = new();
-        tr.StartWarmup(Path.Combine(AppContext.BaseDirectory, "models", "enzh"));
-        for (int i = 0; i < 150 && tr.Status == "loading"; i++)
-        {
-            Thread.Sleep(200);
-        }
+        TranslationOutcome outcome = tr
+            .TranslateAsync(text, Path.Combine(AppContext.BaseDirectory, "models", "enzh"), CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
         log.AppendLine($"translator status={tr.Status} err={tr.Error ?? "-"}");
-        TranslationOutcome outcome = tr.Translate(text);
         log.AppendLine($"translate [{outcome.Status}]: {outcome.Text ?? "(null)"} err={outcome.Error ?? "-"}");
         CloudTranslator cloud = CloudTranslator.FromEnvironment();
         log.AppendLine($"cloud={cloud.Description} enabled={cloud.Enabled}");

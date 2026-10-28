@@ -14,6 +14,12 @@ internal sealed class AppSettings
     [JsonPropertyName("launchAtStartup")]
     public bool LaunchAtStartup { get; set; }
 
+    [JsonPropertyName("cloudTranslation")]
+    public bool CloudTranslation { get; set; } = true;
+
+    [JsonPropertyName("preloadLocalModel")]
+    public bool PreloadLocalModel { get; set; }
+
     [JsonPropertyName("launchCounts")]
     public Dictionary<string, long> LaunchCounts { get; set; } = [];
 

@@ -26,6 +26,7 @@ internal sealed class LauncherForm : Form
     private readonly FileUsageStore _fileUsage;
     private readonly Translator _translator = new();
     private readonly CloudTranslator _cloud = CloudTranslator.FromEnvironment();
+    private readonly string _modelDir = Path.Combine(AppContext.BaseDirectory, "models", "enzh");
     private readonly LauncherModel _model = new();
     private readonly NotifyIcon _tray;
     private readonly SearchBox _input;
@@ -37,6 +38,9 @@ internal sealed class LauncherForm : Form
     private readonly System.Windows.Forms.Timer _clockTimer = new() { Interval = 1000 };
     private readonly System.Windows.Forms.Timer _blur = new() { Interval = 60 };
     private ContextMenuStrip? _menu;
+    private ToolStripMenuItem? _cloudItem;
+    private ToolStripMenuItem? _preloadItem;
+    private ToolStripMenuItem? _modelStatusItem;
     private Font? _inputFont, _clockFont, _noteFont, _menuFont;
     private int _dpi;
     private bool _awaitingFocus;
@@ -62,7 +66,6 @@ internal sealed class LauncherForm : Form
         Text = "QLaunch";
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
-        TopMost = true;
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.Manual;
@@ -104,7 +107,8 @@ internal sealed class LauncherForm : Form
         EnsureFonts();
         PlaceAtPreferredPosition();
 
-        _translator.StartWarmup(Path.Combine(AppContext.BaseDirectory, "models", "enzh"));
+        // 云端可用时完全不碰本地模型：50MB 的模型只在真正需要离线兜底时才加载。
+        MaybePreloadModel();
 
         _tray = new NotifyIcon
         {
@@ -194,11 +198,48 @@ internal sealed class LauncherForm : Form
         }
     }
 
+    private bool CloudUsable => _settings.CloudTranslation && _cloud.Enabled;
+
+    /// <summary>只有确定不会走云端时才预热本地模型，避免为"本地先出"白白占内存。</summary>
+    private void MaybePreloadModel()
+    {
+        if (_settings.PreloadLocalModel && !CloudUsable)
+        {
+            _translator.StartWarmup(_modelDir);
+        }
+    }
+
     private ContextMenuStrip BuildTrayMenu()
     {
         ContextMenuStrip menu = new();
         menu.Items.Add("显示搜索栏 (Alt+Space)", null, (_, _) => Toggle());
         menu.Items.Add("重建应用索引", null, (_, _) => RebuildIndex());
+
+        ToolStripMenuItem translation = new("翻译设置");
+        _cloudItem = new ToolStripMenuItem();
+        _cloudItem.Click += (_, _) =>
+        {
+            _settings.CloudTranslation = !_settings.CloudTranslation;
+            _settings.Save();
+            MaybePreloadModel();
+            UpdateTranslationMenu();
+        };
+        _preloadItem = new ToolStripMenuItem("预加载本地模型");
+        _preloadItem.Click += (_, _) =>
+        {
+            _settings.PreloadLocalModel = !_settings.PreloadLocalModel;
+            _settings.Save();
+            MaybePreloadModel();
+            UpdateTranslationMenu();
+        };
+        _modelStatusItem = new ToolStripMenuItem { Enabled = false };
+        translation.DropDownItems.Add(_cloudItem);
+        translation.DropDownItems.Add(_preloadItem);
+        translation.DropDownItems.Add("-");
+        translation.DropDownItems.Add(_modelStatusItem);
+        translation.DropDownOpening += (_, _) => UpdateTranslationMenu();
+        menu.Items.Add(translation);
+
         ToolStripMenuItem startup = new("开机自启") { Checked = _settings.LaunchAtStartup };
         startup.Click += (_, _) =>
         {
@@ -223,6 +264,30 @@ internal sealed class LauncherForm : Form
             Application.Exit();
         });
         return menu;
+    }
+
+    private void UpdateTranslationMenu()
+    {
+        if (_cloudItem is null || _preloadItem is null || _modelStatusItem is null)
+        {
+            return;
+        }
+        _cloudItem.Text = _cloud.Enabled ? $"云端翻译（{_cloud.Description}）" : "云端翻译（未配置）";
+        _cloudItem.Enabled = _cloud.Enabled;
+        _cloudItem.Checked = CloudUsable;
+
+        bool preloadAllowed = !CloudUsable;
+        _preloadItem.Text = preloadAllowed ? "预加载本地模型" : "本地模型（云端可用时不加载）";
+        _preloadItem.Enabled = preloadAllowed;
+        _preloadItem.Checked = preloadAllowed && _settings.PreloadLocalModel;
+
+        _modelStatusItem.Text = "本地模型：" + _translator.Status switch
+        {
+            "loading" => "加载中…",
+            "ready" => "已就绪",
+            "error" => $"加载失败（{_translator.Error}）",
+            _ => "未加载（按需）"
+        };
     }
 
     protected override CreateParams CreateParams
@@ -338,6 +403,10 @@ internal sealed class LauncherForm : Form
     {
         if (Visible)
         {
+            // 不能依赖 Form.TopMost：它为 true 时 WinForms 会在 Show() 里主动聚焦输入框，
+            // 把前台从用户文档抢走，取词的 UIA 与 Ctrl+C 都会因此失效。这里只改 z 序不激活。
+            Native.SetWindowPos(Handle, Native.HWND_TOPMOST, 0, 0, 0, 0,
+                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
             PaintClock();
             _clockTimer.Start();
             _blur.Start();
@@ -364,73 +433,63 @@ internal sealed class LauncherForm : Form
 
     private async Task PushSelectionAsync(string selection, CancellationToken token)
     {
-        TranslationRace race;
-        try
-        {
-            race = await TranslateBothAsync(selection, token);
-        }
-        catch (OperationCanceledException)
-        {
-            return;
-        }
         // 用户已经在输入框打字时不覆盖，取词结果让位给正在进行的搜索
         if (!Visible || _input.Text.Length > 0)
         {
             return;
         }
-        _model.SetSelection(selection, race.Text ?? (race.Pending ? null : LauncherModel.EngineNotReadyText), race.Pending);
+        // 先显示原文与等待提示，翻译（尤其是首次加载本地模型）完成后原地替换。
+        _model.SetSelection(selection, null, pending: true);
+        int id = _model.QueryId;
         if (selection.Length >= SelectionCapture.MaxChars)
         {
             _model.SetNote($"选中文本超过 {SelectionCapture.MaxChars} 字符，只翻译了前 {SelectionCapture.MaxChars} 字符");
         }
         ShowState();
-        int id = _model.QueryId;
-        if (race.Cloud is not null && await CloudTextAsync(race) is { } final && _model.FinishTranslation(id, final))
+        TranslationOutcome outcome;
+        try
+        {
+            outcome = await TranslateTextAsync(selection, token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        if (_model.FinishTranslation(id, outcome.Text ?? "（翻译失败）"))
         {
             ShowState();
         }
     }
 
     /// <summary>
-    /// 本地与云端同时开跑：本地通常先回来，先显示本地结果，云端完成后再覆盖；云端先回来就直接用云端。
+    /// 一次翻译。云端可用时只走云端，不为"本地先出"加载 50MB 模型；云端未配置、
+    /// 超出云端上限或请求失败时才按需加载本地模型继续翻译。
     /// </summary>
     /// <param name="text">待翻译原文。</param>
     /// <param name="token">取消本次翻译的令牌。</param>
-    /// <returns>首个可展示的文本、是否仍在等云端，以及待等待的云端任务。</returns>
-    private async Task<TranslationRace> TranslateBothAsync(string text, CancellationToken token)
+    /// <returns>翻译结果。</returns>
+    private async Task<TranslationOutcome> TranslateTextAsync(string text, CancellationToken token)
     {
-        Task<TranslationOutcome>? cloud = _cloud.CanTranslate(text) ? _cloud.TranslateAsync(text, token) : null;
-        TranslationOutcome local = await Task.Run(() => _translator.Translate(text), token);
-        if (cloud is { IsCompletedSuccessfully: true } && cloud.Result.HasText)
+        string trimmed = text.Trim();
+        if (trimmed.Length == 0)
         {
-            return new TranslationRace(cloud.Result.Text, false, null, local.Text);
+            return new TranslationOutcome(null, TranslationStatus.Skipped, null);
         }
-        if (local.HasText || local.Status == TranslationStatus.Skipped)
+        if (Translator.IsMostlyChinese(trimmed))
         {
-            return new TranslationRace(local.Text, cloud is not null, cloud, local.Text);
+            return new TranslationOutcome("（原文已是中文，未翻译）", TranslationStatus.Skipped, null);
         }
-        if (cloud is { IsCompletedSuccessfully: true })
+        if (CloudUsable && _cloud.CanTranslate(trimmed))
         {
-            return new TranslationRace(local.Text ?? cloud.Result.Text, false, null, local.Text);
+            TranslationOutcome cloud = await _cloud.TranslateAsync(trimmed, token);
+            if (cloud.HasText)
+            {
+                return cloud;
+            }
+            token.ThrowIfCancellationRequested();
         }
-        return new TranslationRace(null, cloud is not null, cloud, local.Text);
+        return await _translator.TranslateAsync(trimmed, _modelDir, token);
     }
-
-    /// <summary>等云端结果；失败时退回本地文本，保证等待提示不会永远挂着。</summary>
-    private static async Task<string?> CloudTextAsync(TranslationRace race)
-    {
-        try
-        {
-            TranslationOutcome cloud = await race.Cloud!;
-            return cloud.HasText ? cloud.Text : race.LocalText ?? "（翻译失败）";
-        }
-        catch (OperationCanceledException)
-        {
-            return null;
-        }
-    }
-
-    private readonly record struct TranslationRace(string? Text, bool Pending, Task<TranslationOutcome>? Cloud, string? LocalText);
 
     private void PlaceAtPreferredPosition()
     {
@@ -663,7 +722,7 @@ internal sealed class LauncherForm : Form
         string q = Matcher.NormalizeQuery(text);
         string prose = text.Trim();
         bool translate = q.Length > 0 && LooksLikeProse(prose);
-        Task<TranslationRace>? raceTask = translate ? TranslateBothAsync(prose, token) : null;
+        Task<TranslationOutcome>? translation = translate ? TranslateTextAsync(prose, token) : null;
         string? error = null;
         if (q.Length == 0)
         {
@@ -714,24 +773,26 @@ internal sealed class LauncherForm : Form
             results.AddRange(files);
         }
 
-        TranslationRace race = default;
-        if (raceTask is not null)
-        {
-            try
-            {
-                race = await raceTask;
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-        }
-        if (!_model.ApplyResults(id, results, race.Text, error, race.Pending))
+        // 搜索与应用结果先上屏，翻译在后台补；首次加载本地模型时不会把整个查询一起拖住。
+        if (!_model.ApplyResults(id, results, null, error, translation is not null))
         {
             return;
         }
         ShowState();
-        if (race.Cloud is not null && await CloudTextAsync(race) is { } final && _model.FinishTranslation(id, final))
+        if (translation is null)
+        {
+            return;
+        }
+        TranslationOutcome outcome;
+        try
+        {
+            outcome = await translation;
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        if (_model.FinishTranslation(id, outcome.Text ?? "（翻译失败）"))
         {
             ShowState();
         }

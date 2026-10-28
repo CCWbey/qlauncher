@@ -9,7 +9,7 @@
 | --- | --- |
 | 应用启动 | 扫描开始菜单（`.lnk` / `.appref-ms` / `.url`）与 UWP 应用，支持中文名、拼音首字母（`wx` → 微信）、前缀与子序列匹配；空输入时首页只显示**启动过的**应用（按次数排序，最多 18 个），没启动过就不上首页；从文件搜索启动的 exe 会自动取图标加入索引 |
 | 文件搜索 | 调用 Everything SDK，结果与应用混排，显示大小与修改时间；`Ctrl+Enter` 在资源管理器中定位文件 |
-| 英译中 | 本地 Bergamot 先出快译，云端（百度或微软）结果到达后替换；云端不可用时保留本地译文。原文以中文为主时跳过不译 |
+| 英译中 | 云端（百度或微软）可用时只走云端，完全不加载本地模型；云端不可用、翻译失败或原文超长时才按需加载本地 Bergamot 兜底。原文以中文为主时跳过不译 |
 | 划词取词 | 先走 UIA `TextPattern`，失败再模拟 `Ctrl+C` 读剪贴板，并在取词后还原原剪贴板内容 |
 
 ## 快捷键与托盘
@@ -20,10 +20,12 @@
 | `↑` / `↓` | 选择结果；首页宫格左右按 6 个一格平移 |
 | `Enter` | 打开应用／文件；译文行上按 `Enter` 复制译文 |
 | `Ctrl+Enter` | 在资源管理器中选中该文件 |
-| 左键单击译文行 | 在译文与原文之间切换显示（切换后副标题显示另一种语言） |
+| 左键单击译文行 | 在译文与原文之间切换显示（短原文切换后副标题显示另一种语言；原文超过 200 字符时只显示当前这一种，避免结果区被撑满） |
 | `Esc` | 先关右键菜单，再收起窗口 |
 | 右键 | 结果项菜单（打开、定位、复制译文／路径等）；译文行另有"显示原文／显示译文"与两种复制；常用应用可"从常用中移除"，只清启动计数，再次启动仍会出现 |
-| 托盘图标 | 双击切换窗口；菜单含"显示搜索栏 (Alt+Space)"、"重建应用索引"、"开机自启"、"退出" |
+| 托盘图标 | 双击切换窗口；菜单含"显示搜索栏 (Alt+Space)"、"重建应用索引"、"翻译设置"、"开机自启"、"退出" |
+
+"翻译设置"子菜单：云端翻译开关（未配置凭据时显示"未配置"并禁用）、本地模型预加载开关（云端可用时显示"云端可用时不加载"并禁用）、以及当前本地模型状态（未加载／加载中／已就绪／加载失败）。开关写入 `settings.json`，立即生效。
 
 窗口失焦即隐藏，不占任务栏。开机自启写的是 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下名为 `QLaunch` 的值，内容是当前 exe 的绝对路径加 `--minimized`（该参数程序并未处理，靠默认行为本来就是只挂托盘）；关掉开关会删掉这个值。
 
@@ -61,7 +63,7 @@ setx QLAUNCH_CLOUD_REGION "eastasia"
 - 密钥只从环境变量读取，不写 `settings.json`，也不会出现在日志里；`setx` 之后要新开程序（或重新登录）才会读到。
 - 百度标准版单次上限 1000 字符、QPS 1：超过 900 字符的原文按句子拆段，段间串行并留 1.1 秒间隔；免费额度以控制台显示为准。
 - 微软免费 F0 层每月 200 万字符；计费以源文本字符数算。
-- 本地与云端同时发起：本地通常几十毫秒先出译文，云端 0.3~1 秒后替换；云端先回来就直接用云端。云端失败静默处理，界面保留本地译文，不会弹错。
+- 云端优先：配置了凭据且云端翻译开关打开时，本地模型完全不加载（省下约 50 MB 常驻内存和首次加载等待）；云端失败或超长原文时才按需加载本地 Bergamot 兜底，加载是单次的，之后常驻。
 - 门面单次上限 5000 字符（百度内部再拆段），超长原文只走本地（本地上限 20000 字符，超出部分截断并提示）。
 
 ## 一键构建
@@ -105,7 +107,7 @@ GitHub Actions（[.github/workflows/build.yml](.github/workflows/build.yml)）�
 
 ```powershell
 & .\dist\QLaunch.exe --selftest "hello world"
-Start-Sleep -Seconds 30      # 翻译模型预热要等一会儿
+Start-Sleep -Seconds 30      # 本地模型按需加载要等一会儿
 Get-Content "$env:APPDATA\QLaunch\selftest.log"
 ```
 
@@ -131,7 +133,7 @@ src/AppIndex.cs     开始菜单与 UWP 扫描、图标抽取、apps.json 缓存
 src/Matcher.cs      应用打分（完全 > 前缀 > 拼音 > 分词 > 包含 > 子序列）
 src/Pinyin.cs       GB2312 锚点法取拼音首字母
 src/EverythingSearch.cs  Everything SDK P/Invoke 与降级提示
-src/Translator.cs   Bergamot 离线英译中、后台预热
+src/Translator.cs   Bergamot 离线英译中、按需单次加载、原生调用串行化
 src/CloudTranslator.cs  云端翻译门面：按环境变量选服务商，统一长度与中文原文拦截
 src/ICloudTranslationProvider.cs  云端服务商接口（Enabled / Description / MaxInput / TranslateAsync）
 src/BaiduCloudTranslator.cs  百度通用文本翻译（MD5 签名，长文拆段串行）
@@ -153,7 +155,7 @@ LICENSE / THIRD-PARTY-NOTICES.md   MIT 许可与第三方组件（MPL-2.0、Ever
 
 | 文件／目录 | 内容 |
 | --- | --- |
-| `settings.json` | `maxResults`(20)、`fileResults`(12)、`launchAtStartup`、各应用启动次数 |
+| `settings.json` | `maxResults`(20)、`fileResults`(12)、`launchAtStartup`、`cloudTranslation`(true)、`preloadLocalModel`(false)、各应用启动次数 |
 | `apps.json` | 应用索引缓存 |
 | `portable.json` | 从文件搜索启动过的便携 exe 索引；右键移除时一并删除 |
 | `icons/` | 32px 应用图标 PNG |
@@ -163,8 +165,8 @@ LICENSE / THIRD-PARTY-NOTICES.md   MIT 许可与第三方组件（MPL-2.0、Ever
 
 - **唤不出来**：`Alt+Space` 可能被别的启动器（ZTools、输入法等）占了，程序会在界面提示，并退回用托盘图标唤出。
 - **文件搜索没结果**：需要 Everything 正在运行；未运行时提示"Everything 未运行，请先启动 Everything"，缺 `Everything64.dll` 则提示"未找到 Everything64.dll"。
-- **翻译不可用**：提示"翻译引擎不可用：缺少翻译模型配置"说明产物里 `models/enzh/config.txt` 没跟着拷过去；`dist/` 是 `dotnet publish` 的输出，模型是 `Content Include="models\**"` 带过去的。
-- **云端译文没出现**：`selftest.log` 里 `cloud=disabled` 表示当前进程读不到凭据（`setx` 后要重开程序）；百度看 `QLAUNCH_BAIDU_APPID` / `QLAUNCH_BAIDU_KEY`，微软看 `QLAUNCH_CLOUD_KEY`。`cloud translate` 报 HTTP 401 一般是微软密钥或区域不匹配，多区域资源的 Key 必须同时给 `QLAUNCH_CLOUD_REGION`；百度报 `error_code` 时优先查 54001（签名错误）与 54003（QPS 超限）。云端失败不会弹窗，界面会一直显示本地译文。
+- **翻译不可用**：提示"翻译引擎不可用：缺少翻译模型配置"说明产物里 `models/enzh/config.txt` 没跟着拷过去；`dist/` 是 `dotnet publish` 的输出，模型是 `Content Include="models\**"` 带过去的。云端可用时不影响翻译，只在云端失败后兜底时才会暴露。
+- **云端译文没出现**：`selftest.log` 里 `cloud=disabled` 表示当前进程读不到凭据（`setx` 后要重开程序）；百度看 `QLAUNCH_BAIDU_APPID` / `QLAUNCH_BAIDU_KEY`，微软看 `QLAUNCH_CLOUD_KEY`。`cloud translate` 报 HTTP 401 一般是微软密钥或区域不匹配，多区域资源的 Key 必须同时给 `QLAUNCH_CLOUD_REGION`；百度报 `error_code` 时优先查 54001（签名错误）与 54003（QPS 超限）。云端失败不会弹窗，会自动用本地模型兜底；本地也失败时译文行显示失败原因。
 - **重复双击没反应**：单实例互斥 `QLaunch.SingleInstance` 会让第二次启动静默退出，先确认托盘里是否已经有一个。
 - **从管理员窗口划词取不到字**：UIPI 会挡住低权限进程向提权窗口发 `Ctrl+C`，属系统限制。
 - **开机自启弹警告**：受限组策略下写 `HKCU\...\Run` 可能被拦，可改为把快捷方式放进启动文件夹（`shell:startup`）。
