@@ -80,7 +80,7 @@ internal static class Program
             .GetResult();
         log.AppendLine($"translator status={tr.Status} err={tr.Error ?? "-"}");
         log.AppendLine($"translate [{outcome.Status}]: {outcome.Text ?? "(null)"} err={outcome.Error ?? "-"}");
-        CloudTranslator cloud = CloudTranslator.FromEnvironment();
+        CloudTranslator cloud = CloudTranslator.FromCredentials(CloudCredentials.Load(dataDir));
         log.AppendLine($"cloud={cloud.Description} enabled={cloud.Enabled}");
         if (cloud.Enabled)
         {

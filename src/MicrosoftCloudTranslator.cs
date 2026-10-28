@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace QLaunch;
 
 /// <summary>
-/// 微软 Translator（Azure 认知服务）。凭据来自 QLAUNCH_CLOUD_KEY / QLAUNCH_CLOUD_REGION / QLAUNCH_CLOUD_ENDPOINT。
+/// 微软 Translator（Azure 认知服务）。凭据来自程序内配置的订阅密钥、可选区域与自定义 Endpoint。
 /// </summary>
 internal sealed class MicrosoftCloudTranslator : ICloudTranslationProvider
 {
@@ -30,15 +30,14 @@ internal sealed class MicrosoftCloudTranslator : ICloudTranslationProvider
 
     public int MaxInput => 5000;
 
-    public static MicrosoftCloudTranslator FromEnvironment()
+    public static MicrosoftCloudTranslator FromCredentials(CloudCredentials credentials)
     {
-        string key = (Environment.GetEnvironmentVariable("QLAUNCH_CLOUD_KEY") ?? "").Trim();
-        string? region = Environment.GetEnvironmentVariable("QLAUNCH_CLOUD_REGION");
-        string endpoint = (Environment.GetEnvironmentVariable("QLAUNCH_CLOUD_ENDPOINT") ?? DefaultEndpoint).Trim();
+        string region = credentials.MicrosoftRegion.Trim();
+        string endpoint = credentials.MicrosoftEndpoint.Trim();
         return new MicrosoftCloudTranslator(
-            key,
-            string.IsNullOrWhiteSpace(region) ? null : region.Trim(),
-            endpoint.TrimEnd('/'));
+            credentials.MicrosoftKey.Trim(),
+            region.Length == 0 ? null : region,
+            (endpoint.Length == 0 ? DefaultEndpoint : endpoint).TrimEnd('/'));
     }
 
     public async Task<TranslationOutcome> TranslateAsync(string text, CancellationToken token)

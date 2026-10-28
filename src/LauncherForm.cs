@@ -25,7 +25,8 @@ internal sealed class LauncherForm : Form
     private readonly EverythingSearch _everything = new();
     private readonly FileUsageStore _fileUsage;
     private readonly Translator _translator = new();
-    private readonly CloudTranslator _cloud = CloudTranslator.FromEnvironment();
+    private CloudCredentials _credentials;
+    private CloudTranslator _cloud;
     private readonly string _modelDir = Path.Combine(AppContext.BaseDirectory, "models", "enzh");
     private readonly LauncherModel _model = new();
     private readonly NotifyIcon _tray;
@@ -38,9 +39,6 @@ internal sealed class LauncherForm : Form
     private readonly System.Windows.Forms.Timer _clockTimer = new() { Interval = 1000 };
     private readonly System.Windows.Forms.Timer _blur = new() { Interval = 60 };
     private ContextMenuStrip? _menu;
-    private ToolStripMenuItem? _cloudItem;
-    private ToolStripMenuItem? _preloadItem;
-    private ToolStripMenuItem? _modelStatusItem;
     private Font? _inputFont, _clockFont, _noteFont, _menuFont;
     private int _dpi;
     private bool _awaitingFocus;
@@ -60,6 +58,8 @@ internal sealed class LauncherForm : Form
         _settings = settings;
         _index = index;
         _fileUsage = FileUsageStore.Load(settings.DataDir);
+        _credentials = CloudCredentials.Load(settings.DataDir);
+        _cloud = CloudTranslator.FromCredentials(_credentials);
         _showOnStartup = showOnStartup;
         _vsCode = FindVsCode();
         _model.VsCodeAvailable = _vsCode is not null;
@@ -198,7 +198,7 @@ internal sealed class LauncherForm : Form
         }
     }
 
-    private bool CloudUsable => _settings.CloudTranslation && _cloud.Enabled;
+    private bool CloudUsable => _cloud.Enabled;
 
     /// <summary>只有确定不会走云端时才预热本地模型，避免为"本地先出"白白占内存。</summary>
     private void MaybePreloadModel()
@@ -214,31 +214,7 @@ internal sealed class LauncherForm : Form
         ContextMenuStrip menu = new();
         menu.Items.Add("显示搜索栏 (Alt+Space)", null, (_, _) => Toggle());
         menu.Items.Add("重建应用索引", null, (_, _) => RebuildIndex());
-
-        ToolStripMenuItem translation = new("翻译设置");
-        _cloudItem = new ToolStripMenuItem();
-        _cloudItem.Click += (_, _) =>
-        {
-            _settings.CloudTranslation = !_settings.CloudTranslation;
-            _settings.Save();
-            MaybePreloadModel();
-            UpdateTranslationMenu();
-        };
-        _preloadItem = new ToolStripMenuItem("预加载本地模型");
-        _preloadItem.Click += (_, _) =>
-        {
-            _settings.PreloadLocalModel = !_settings.PreloadLocalModel;
-            _settings.Save();
-            MaybePreloadModel();
-            UpdateTranslationMenu();
-        };
-        _modelStatusItem = new ToolStripMenuItem { Enabled = false };
-        translation.DropDownItems.Add(_cloudItem);
-        translation.DropDownItems.Add(_preloadItem);
-        translation.DropDownItems.Add("-");
-        translation.DropDownItems.Add(_modelStatusItem);
-        translation.DropDownOpening += (_, _) => UpdateTranslationMenu();
-        menu.Items.Add(translation);
+        menu.Items.Add("翻译设置…", null, (_, _) => BeginInvoke(OpenTranslationSettings));
 
         ToolStripMenuItem startup = new("开机自启") { Checked = _settings.LaunchAtStartup };
         startup.Click += (_, _) =>
@@ -266,28 +242,36 @@ internal sealed class LauncherForm : Form
         return menu;
     }
 
-    private void UpdateTranslationMenu()
+    /// <summary>打开翻译设置：保存后重建门面，立即生效，不需要重启程序。</summary>
+    private void OpenTranslationSettings()
     {
-        if (_cloudItem is null || _preloadItem is null || _modelStatusItem is null)
-        {
-            return;
-        }
-        _cloudItem.Text = _cloud.Enabled ? $"云端翻译（{_cloud.Description}）" : "云端翻译（未配置）";
-        _cloudItem.Enabled = _cloud.Enabled;
-        _cloudItem.Checked = CloudUsable;
-
-        bool preloadAllowed = !CloudUsable;
-        _preloadItem.Text = preloadAllowed ? "预加载本地模型" : "本地模型（云端可用时不加载）";
-        _preloadItem.Enabled = preloadAllowed;
-        _preloadItem.Checked = preloadAllowed && _settings.PreloadLocalModel;
-
-        _modelStatusItem.Text = "本地模型：" + _translator.Status switch
+        string status = _translator.Status switch
         {
             "loading" => "加载中…",
             "ready" => "已就绪",
             "error" => $"加载失败（{_translator.Error}）",
             _ => "未加载（按需）"
         };
+        using TranslationSettingsForm dialog = new(_credentials, _settings.PreloadLocalModel, status);
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+        try
+        {
+            dialog.Credentials.Save();
+            _settings.PreloadLocalModel = dialog.PreloadLocalModel;
+            _settings.Save();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException
+            or System.Security.Cryptography.CryptographicException)
+        {
+            MessageBox.Show($"无法保存翻译设置：{e.Message}", "QLaunch", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        _credentials = dialog.Credentials;
+        _cloud = CloudTranslator.FromCredentials(_credentials);
+        MaybePreloadModel();
     }
 
     protected override CreateParams CreateParams

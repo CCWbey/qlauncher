@@ -9,7 +9,7 @@ namespace QLaunch;
 /// <summary>
 /// 百度翻译开放平台通用文本翻译。标准版单次 1000 字符、QPS 1，
 /// 所以长文按句子拆成 900 字符以内的段，段间串行并留出节流间隔。
-/// 凭据来自 QLAUNCH_BAIDU_APPID / QLAUNCH_BAIDU_KEY。
+/// 凭据来自程序内配置的百度 APP ID 与密钥。
 /// </summary>
 internal sealed class BaiduCloudTranslator : ICloudTranslationProvider
 {
@@ -33,12 +33,8 @@ internal sealed class BaiduCloudTranslator : ICloudTranslationProvider
 
     public int MaxInput => 5000;
 
-    public static BaiduCloudTranslator FromEnvironment()
-    {
-        string appId = (Environment.GetEnvironmentVariable("QLAUNCH_BAIDU_APPID") ?? "").Trim();
-        string key = (Environment.GetEnvironmentVariable("QLAUNCH_BAIDU_KEY") ?? "").Trim();
-        return new BaiduCloudTranslator(appId, key);
-    }
+    public static BaiduCloudTranslator FromCredentials(CloudCredentials credentials) =>
+        new(credentials.BaiduAppId.Trim(), credentials.BaiduKey.Trim());
 
     public async Task<TranslationOutcome> TranslateAsync(string text, CancellationToken token)
     {

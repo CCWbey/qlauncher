@@ -1,37 +1,36 @@
 namespace QLaunch;
 
 /// <summary>
-/// 云端英译中门面：按环境变量选一个服务商，统一拦截空文本、中文原文与超长原文。
-/// 未配置任何凭据时整条链路禁用，界面只走本地引擎；请求失败不抛给界面，调用方保留本地结果。
+/// 云端英译中门面：按程序内保存的翻译方式选一个服务商，统一拦截空文本、中文原文与超长原文。
+/// 选本地或凭据缺失时整条链路禁用，界面只走本地引擎；请求失败不抛给界面，调用方保留本地结果。
 /// </summary>
 internal sealed class CloudTranslator
 {
-    private readonly ICloudTranslationProvider _provider;
+    private readonly ICloudTranslationProvider? _provider;
 
-    private CloudTranslator(ICloudTranslationProvider provider)
+    private CloudTranslator(ICloudTranslationProvider? provider)
     {
         _provider = provider;
     }
 
-    public bool Enabled => _provider.Enabled;
+    public bool Enabled => _provider is { Enabled: true };
 
-    public string Description => _provider.Description;
+    public string Description => _provider?.Description ?? "disabled";
 
     /// <summary>
-    /// QLAUNCH_CLOUD_PROVIDER 可强制 baidu 或 microsoft；留空时优先用已配好凭据的百度，其次微软。
-    /// Key 不落盘，改了环境变量后需要重启程序。
+    /// 按凭据里保存的翻译方式构造：baidu / microsoft / deepl 对应云端服务商，
+    /// 其他值（本地 Bergamot 或旧配置）一律禁用云端。
     /// </summary>
-    public static CloudTranslator FromEnvironment()
+    /// <param name="credentials">已解密或刚编辑过的凭据。</param>
+    /// <returns>门面实例；未选云端服务商或凭据不全时 Enabled 为 false。</returns>
+    public static CloudTranslator FromCredentials(CloudCredentials credentials)
     {
-        MicrosoftCloudTranslator microsoft = MicrosoftCloudTranslator.FromEnvironment();
-        BaiduCloudTranslator baidu = BaiduCloudTranslator.FromEnvironment();
-        ICloudTranslationProvider provider = (Environment.GetEnvironmentVariable("QLAUNCH_CLOUD_PROVIDER") ?? "")
-            .Trim()
-            .ToLowerInvariant() switch
+        ICloudTranslationProvider? provider = credentials.Provider.Trim().ToLowerInvariant() switch
         {
-            "baidu" => baidu,
-            "microsoft" => microsoft,
-            _ => baidu.Enabled ? baidu : microsoft
+            "baidu" => BaiduCloudTranslator.FromCredentials(credentials),
+            "microsoft" => MicrosoftCloudTranslator.FromCredentials(credentials),
+            "deepl" => DeepLCloudTranslator.FromCredentials(credentials),
+            _ => null
         };
         return new CloudTranslator(provider);
     }
@@ -40,7 +39,8 @@ internal sealed class CloudTranslator
     public bool CanTranslate(string text)
     {
         string trimmed = text.Trim();
-        return Enabled
+        return _provider is not null
+            && Enabled
             && trimmed.Length > 0
             && trimmed.Length <= _provider.MaxInput
             && !Translator.IsMostlyChinese(trimmed);
@@ -57,7 +57,7 @@ internal sealed class CloudTranslator
         {
             return new TranslationOutcome("（原文已是中文，未翻译）", TranslationStatus.Skipped, null);
         }
-        if (!Enabled)
+        if (_provider is null || !Enabled)
         {
             return new TranslationOutcome(null, TranslationStatus.NotReady, null);
         }
