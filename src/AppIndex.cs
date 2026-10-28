@@ -181,13 +181,15 @@ internal sealed class AppIndex
     }
 
     /// <summary>
-    /// 把开始菜单扫描结果与便携 exe 合并成对外索引，同一路径且无参数的项只保留扫描版本。
+    /// 把开始菜单扫描结果、系统工具与便携 exe 合并成对外索引，扫描项与便携项同路径同参数时只留一份。
+    /// 系统工具不去重：开始菜单里这批是英文名（services / Disk Cleanup …），两份都留着才能中英文都搜到。
     /// </summary>
     /// <returns>无返回值。</returns>
     private void RebuildEntries()
     {
         _entries.Clear();
         _entries.AddRange(_scanned);
+        _entries.AddRange(SystemTools());
         HashSet<string> keys = new(_entries.Select(EntryKey), StringComparer.OrdinalIgnoreCase);
         foreach (AppEntry entry in _portable)
         {
@@ -195,6 +197,61 @@ internal sealed class AppIndex
             {
                 _entries.Add(entry);
             }
+        }
+    }
+
+    /// <summary>
+    /// 系统自带的管理工具（Win+X 那一批加控制面板项）。只留在内存里，不写进 apps.json，
+    /// 换机器或系统升级后不会留下过期路径；文件不存在的条目直接跳过，兼容精简版系统。
+    /// </summary>
+    /// <returns>可启动的系统工具条目。</returns>
+    private IEnumerable<AppEntry> SystemTools()
+    {
+        string system = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        // regedit.exe 在 Windows 根目录而非 System32，按 System32 → Windows 根目录顺序找
+        string Resolve(string file)
+        {
+            string inSystem = Path.Combine(system, file);
+            return File.Exists(inSystem) ? inSystem : Path.Combine(windows, file);
+        }
+        (string Name, string Exe, string Arguments, string IconFile)[] tools =
+        [
+            ("控制面板", "control.exe", "", "control.exe"),
+            ("环境变量", "rundll32.exe", "sysdm.cpl,EditEnvironmentVariables", "sysdm.cpl"),
+            ("设备管理器", "devmgmt.msc", "", "devmgmt.msc"),
+            ("服务", "services.msc", "", "services.msc"),
+            ("事件查看器", "eventvwr.msc", "", "eventvwr.msc"),
+            ("任务管理器", "taskmgr.exe", "", "taskmgr.exe"),
+            ("计算机管理", "compmgmt.msc", "", "compmgmt.msc"),
+            ("磁盘管理", "diskmgmt.msc", "", "diskmgmt.msc"),
+            ("磁盘清理", "cleanmgr.exe", "", "cleanmgr.exe"),
+            ("系统信息", "msinfo32.exe", "", "msinfo32.exe"),
+            ("系统配置", "msconfig.exe", "", "msconfig.exe"),
+            ("程序和功能", "control.exe", "appwiz.cpl", "appwiz.cpl"),
+            ("电源选项", "control.exe", "powercfg.cpl", "powercfg.cpl"),
+            ("网络连接", "control.exe", "ncpa.cpl", "ncpa.cpl"),
+            ("日期和时间", "control.exe", "timedate.cpl", "timedate.cpl"),
+            ("注册表编辑器", "regedit.exe", "", "regedit.exe"),
+            ("任务计划程序", "taskschd.msc", "", "taskschd.msc"),
+            ("资源监视器", "resmon.exe", "", "resmon.exe")
+        ];
+        foreach ((string name, string exe, string arguments, string iconFile) in tools)
+        {
+            string target = Resolve(exe);
+            string iconSource = Resolve(iconFile);
+            if (!File.Exists(target) || !File.Exists(iconSource))
+            {
+                continue;
+            }
+            yield return new AppEntry
+            {
+                Name = name,
+                Initials = Pinyin.GetInitials(name),
+                Path = target,
+                Arguments = arguments,
+                Icon = WriteIcon(iconSource, name)
+            };
         }
     }
 

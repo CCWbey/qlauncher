@@ -48,7 +48,7 @@ internal static class Program
         {
             log.AppendLine($"  app: {a.Name} | {a.Initials} | {a.Path} | icon={a.Icon}");
         }
-        foreach (string probe in new[] { "chrome", "wx", "记事本" })
+        foreach (string probe in new[] { "chrome", "wx", "记事本", "环境变量" })
         {
             AppEntry? hit = idx.Entries
                 .Select(a => (a, Matcher.ScoreApp(probe, a)))

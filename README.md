@@ -7,7 +7,7 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| 应用启动 | 扫描开始菜单（`.lnk` / `.appref-ms` / `.url`）与 UWP 应用，支持中文名、拼音首字母（`wx` → 微信）、前缀与子序列匹配；空输入时首页只显示**启动过的**应用（按次数排序，最多 18 个），没启动过就不上首页；从文件搜索启动的 exe 会自动取图标加入索引 |
+| 应用启动 | 扫描开始菜单（`.lnk` / `.appref-ms` / `.url`）与 UWP 应用，支持中文名、拼音首字母（`wx` → 微信）、前缀与子序列匹配；空输入时首页只显示**启动过的**应用（按次数排序，最多 18 个），没启动过就不上首页；从文件搜索启动的 exe 会自动取图标加入索引。另内置 18 项系统工具（控制面板、环境变量、设备管理器、服务、事件查看器、磁盘管理、注册表编辑器等），不写进 `apps.json`，中文名与拼音首字母都能搜 |
 | 文件搜索 | 调用 Everything SDK，结果与应用混排，显示大小与修改时间；`Ctrl+Enter` 在资源管理器中定位文件 |
 | 英译中 | 选了云端服务商（百度／微软／DeepL）时只走云端，完全不加载本地模型；选本地 Bergamot、云端失败或原文超长时才按需加载本地模型。原文以中文为主时跳过不译 |
 | 划词取词 | 先走 UIA `TextPattern`，失败再模拟 `Ctrl+C` 读剪贴板，并在取词后还原原剪贴板内容 |
@@ -116,7 +116,7 @@ Get-Content "$env:APPDATA\QLaunch\selftest.log"
 ```
 QLaunch.csproj      项目文件：WinForms + BergamotTranslatorSharp，补 UIAutomation 引用，钉 win-x64 不自带运行时
 Program.cs          入口：单实例互斥、参数分流、索引加载、可选自检
-src/AppIndex.cs     开始菜单与 UWP 扫描、图标抽取、apps.json 缓存
+src/AppIndex.cs     开始菜单与 UWP 扫描、内置系统工具、图标抽取、apps.json 缓存
 src/Matcher.cs      应用打分（完全 > 前缀 > 拼音 > 分词 > 包含 > 子序列）
 src/Pinyin.cs       GB2312 锚点法取拼音首字母
 src/EverythingSearch.cs  Everything SDK P/Invoke 与降级提示
